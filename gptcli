@@ -9,6 +9,7 @@ from mistletoe.base_renderer import BaseRenderer
 from mistletoe.block_token import BlockCode
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.prompt import Prompt, Confirm
 
 tokens_consumed: int = 0
 console = Console()
@@ -45,7 +46,7 @@ def main(args):
       # clear the prompt for next iterations
       args.prompt = None
     else:
-      prompt = input("Prompt: ")
+      prompt = Prompt.ask("Enter prompt")
     
     message_history.append({"role": "user", "content": prompt})
 
@@ -69,7 +70,7 @@ def main(args):
     if args.run:
       answer = 'y'
     else:
-      answer = input("Is it ok to run those commands? y/n/s: ")
+      answer = Prompt.ask("Run those commands", choices=['y', 'n', 's'])
 
     if answer.lower() == 's':
       continue
