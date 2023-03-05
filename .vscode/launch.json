@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": "'How many cores does my CPU have'"
+            "args": "-1 -v -p 'How many cores does my CPU have'"
         }
     ]
 }
