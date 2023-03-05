@@ -4,8 +4,24 @@ import os
 import subprocess
 import openai
 import argparse
+import mistletoe
+from mistletoe.base_renderer import BaseRenderer
+from mistletoe.block_token import BlockCode
+from rich.console import Console
+from rich.markdown import Markdown
 
 tokens_consumed: int = 0
+console = Console()
+
+# Finds code blocks in markdown
+class CodeBlockFinder(BaseRenderer):
+  def __init__(self):
+    super().__init__()
+    self.code_blocks = []
+
+  def render_block_code(self, token: BlockCode) -> str:
+    self.code_blocks.append(token.children[0].content.strip())
+    return super().render_block_code(token)
 
 def main(args):
   global tokens_consumed
@@ -14,10 +30,10 @@ def main(args):
 
   if not args.empty:
     message_history = [
-      {"role": "user", "content": "Convert natural language into commands in terminal\nPrefix all runnable commands by '!' sybmol, and print them on separate line\nBe short and concise"},
+      {"role": "user", "content": "Convert natural language into commands in terminal\nOutput in markdown format"},
       # {"role": "user", "content": "Convert natural language into terminal commands, and describe their output."},
       {"role": "user", "content": "What system am I running on?"},
-      {"role": "assistant", "content": "This command will print the kernel you're running:\n!uname -a"},
+      {"role": "assistant", "content": "This command will print the kernel you're running:\n```sh\nuname -a\n```"},
       {"role": "system", "content": "Linux ebk1040g3 6.2.1-arch1-1 #1 SMP PREEMPT_DYNAMIC Sun, 26 Feb 2023 03:39:23 +0000 x86_64 GNU/Linux"},
       {"role": "assistant", "content": "Your computer is running Arch GNU/Linux 6.2.1"},
       # {"role": "user", "content": args.prompt},
@@ -39,17 +55,13 @@ def main(args):
       temperature=args.temperature,
       messages=message_history
     )
-    print(completion.choices[0].message.content)
     tokens_consumed += completion.usage.completion_tokens
+    console.print(Markdown(completion.choices[0].message.content, justify="left"))
 
     commands_to_run: list[str] = []
-    lines: list[str] = completion.choices[0].message.content.split("\n")
-    for line in lines:
-      if not line.startswith("!"):
-        continue
-
-      command = line[1:]
-      commands_to_run.append(command)
+    with CodeBlockFinder() as renderer:
+      renderer.render(mistletoe.Document(completion.choices[0].message.content))
+      commands_to_run = renderer.code_blocks
 
     for i, command in enumerate(commands_to_run):
       print(f"{i}. {command}")
