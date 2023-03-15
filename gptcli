@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.prompt import Prompt, Confirm
 
+import voice
+
 tokens_consumed: int = 0
 console = Console()
 
@@ -41,7 +43,10 @@ def main(args):
     ]
 
   while True:
-    if args.prompt:
+    if args.voice:
+      prompt = voice.get_voice_command('en')
+      print(prompt)
+    elif args.prompt:
       prompt = args.prompt
       # clear the prompt for next iterations
       args.prompt = None
@@ -115,6 +120,7 @@ if __name__ == '__main__':
   parser.add_argument('-p', '--prompt', help="The prompt to use")
   parser.add_argument('-y', '--run', help="(DANGEROUS) Run the command immediately", action='store_true')
   parser.add_argument('-0', '--empty', help="Start with empty history", action='store_true')
+  parser.add_argument('-s', '--voice', help="Perform speech to text", action='store_true')
   parser.add_argument('-v', '--verbose', help="Be more verbose", action='store_true')
 
   args = parser.parse_args()
