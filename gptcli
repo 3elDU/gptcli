@@ -1,114 +1,75 @@
 #! /usr/bin/env python3
 
 import os
-import subprocess
+import sys
 import openai
 import argparse
-import mistletoe
-from mistletoe.base_renderer import BaseRenderer
-from mistletoe.block_token import BlockCode
+import readline
+import atexit
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.prompt import Prompt, Confirm
-
-import voice
 
 tokens_consumed: int = 0
 console = Console()
 
-# Finds code blocks in markdown
-class CodeBlockFinder(BaseRenderer):
-  def __init__(self):
-    super().__init__()
-    self.code_blocks = []
+histfile = os.path.join(os.path.expanduser("~"), ".gpt_history")
+try:
+  readline.read_history_file(histfile)
+  readline.set_history_length(1000)
+except FileNotFoundError:
+  pass
+atexit.register(readline.write_history_file, histfile)
 
-  def render_block_code(self, token: BlockCode) -> str:
-    self.code_blocks.append(token.children[0].content.strip())
-    return super().render_block_code(token)
+class Main:
+  def __init__(self, args):
+    self.args = args
 
-def main(args):
-  global tokens_consumed
+    self.tokens_consumed = 0
+    self.message_history = []
 
-  message_history = []
+    if self.args.system:
+      self.message_history.append({"role": "system", "content": self.args.system})
 
-  if not args.empty:
-    message_history = [
-      {"role": "user", "content": "Convert natural language into commands in terminal\nOutput in markdown format"},
-      # {"role": "user", "content": "Convert natural language into terminal commands, and describe their output."},
-      {"role": "user", "content": "What system am I running on?"},
-      {"role": "assistant", "content": "This command will print the kernel you're running:\n```sh\nuname -a\n```"},
-      {"role": "system", "content": "Linux ebk1040g3 6.2.1-arch1-1 #1 SMP PREEMPT_DYNAMIC Sun, 26 Feb 2023 03:39:23 +0000 x86_64 GNU/Linux"},
-      {"role": "assistant", "content": "Your computer is running Arch GNU/Linux 6.2.1"},
-      # {"role": "user", "content": args.prompt},
-    ]
-
-  while True:
-    if args.voice:
-      prompt = voice.get_voice_command('en')
-      print(prompt)
-    elif args.prompt:
-      prompt = args.prompt
-      # clear the prompt for next iterations
-      args.prompt = None
-    else:
-      prompt = Prompt.ask("Enter prompt")
-    
-    message_history.append({"role": "user", "content": prompt})
-
-    # 1st stage ( AI parsing natural language, converting it into shell command )
+  def process(self, prompt: str) -> str:
     completion = openai.ChatCompletion.create(
-      model=args.model,
-      temperature=args.temperature,
-      messages=message_history
+      model=self.args.model,
+      temperature=self.args.temperature,
+      messages=self.message_history,
+      stream=True,
     )
-    tokens_consumed += completion.usage.completion_tokens
-    console.print(Markdown(completion.choices[0].message.content, justify="left"))
 
-    commands_to_run: list[str] = []
-    with CodeBlockFinder() as renderer:
-      renderer.render(mistletoe.Document(completion.choices[0].message.content))
-      commands_to_run = renderer.code_blocks
+    response = ""
 
-    for i, command in enumerate(commands_to_run):
-      print(f"{i}. {command}")
+    for i, chunk in enumerate(completion):
+      if 'content' in chunk['choices'][0]['delta']:
+        content: str = chunk['choices'][0]['delta']['content']
 
-    if args.run:
-      answer = 'y'
-    else:
-      answer = Prompt.ask("Run those commands", choices=['y', 'n', 's'])
+        if i == 1 and content == '\n\n':
+          continue
 
-    if answer.lower() == 's':
-      continue
-    if answer.lower() != 'y':
-      exit()
+        response += content
+        self.tokens_consumed += 1
+        sys.stdout.write(content)
+        sys.stdout.flush()
 
-    message_history.append(completion.choices[0].message)
+    print("")
+        
+    return response
 
-    for command in commands_to_run:
-      # 2nd stage ( running the command )
-      result = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
-      output = result.stdout.decode()
-      message_history.append({
-        "role": "system",
-        "content": output + f"\nExit code: {result.returncode}"
-      })
-      print(output)
+  def run(self):
+    while True:
+      prompt = input("Prompt: ")
+      self.message_history.append({"role": "user", "content": prompt})
 
-    # 3rd stage ( AI parsing the command output )
-    completion = openai.ChatCompletion.create(
-      model=args.model,
-      temperature=args.temperature,
-      messages=message_history
-    )
-    tokens_consumed += completion.usage.completion_tokens
+      response = self.process(prompt)
+      # console.print(Markdown(response, justify="left"))
+      self.message_history.append({"role": "assistant", "content": response})
 
-    print(completion.choices[0].message.content)
+      if self.args.verbose:
+        print("Tokens consumed:", self.tokens_consumed)
 
-    if args.oneshot:
-      break
-
-  if args.verbose:
-    print("tokens consumed:", tokens_consumed)
+      if len(self.message_history) > 8:
+        self.message_history = self.message_history[len(self.message_history)-8:]
 
 if __name__ == '__main__':
   openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -116,15 +77,13 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('-t', '--temperature', help="How random the answer should be. Values from 0 to 2", type=float, default=0)
   parser.add_argument('-m', '--model', help="Model to use", default="gpt-3.5-turbo")
-  parser.add_argument('-1', '--oneshot', help="Run non-interactively", action='store_true')
-  parser.add_argument('-p', '--prompt', help="The prompt to use")
-  parser.add_argument('-y', '--run', help="(DANGEROUS) Run the command immediately", action='store_true')
-  parser.add_argument('-0', '--empty', help="Start with empty history", action='store_true')
-  parser.add_argument('-s', '--voice', help="Perform speech to text", action='store_true')
+  parser.add_argument('-l', '--limit', help="Maximum amount of tokens for response", type=int, default=300)
+  parser.add_argument('-s', '--system', help="Add a system message")
   parser.add_argument('-v', '--verbose', help="Be more verbose", action='store_true')
 
   args = parser.parse_args()
   try:
-    main(args)
+    main = Main(args)
+    main.run()
   except KeyboardInterrupt:
     pass
