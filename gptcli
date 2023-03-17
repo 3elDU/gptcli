@@ -12,6 +12,7 @@ from rich.markdown import Markdown
 from rich.prompt import Prompt, Confirm
 
 import voice
+import read
 
 tokens_consumed: int = 0
 console = Console()
@@ -51,7 +52,7 @@ def main(args):
       # clear the prompt for next iterations
       args.prompt = None
     else:
-      prompt = Prompt.ask("Enter prompt")
+      prompt = input("Prompt: ")
     
     message_history.append({"role": "user", "content": prompt})
 
@@ -61,54 +62,54 @@ def main(args):
       temperature=args.temperature,
       messages=message_history
     )
-    tokens_consumed += completion.usage.completion_tokens
+    tokens_consumed += completion.usage.total_tokens
     console.print(Markdown(completion.choices[0].message.content, justify="left"))
 
-    commands_to_run: list[str] = []
-    with CodeBlockFinder() as renderer:
-      renderer.render(mistletoe.Document(completion.choices[0].message.content))
-      commands_to_run = renderer.code_blocks
+    if not args.no_parse_commands:
+      commands_to_run: list[str] = []
+      with CodeBlockFinder() as renderer:
+        renderer.render(mistletoe.Document(completion.choices[0].message.content))
+        commands_to_run = renderer.code_blocks
 
-    for i, command in enumerate(commands_to_run):
-      print(f"{i}. {command}")
+      for i, command in enumerate(commands_to_run):
+        print(f"{i}. {command}")
 
-    if args.run:
-      answer = 'y'
-    else:
-      answer = Prompt.ask("Run those commands", choices=['y', 'n', 's'])
+      if args.run:
+        answer = 'y'
+      else:
+        answer = Prompt.ask("Run those commands", choices=['y', 'n', 's'])
 
-    if answer.lower() == 's':
-      continue
-    if answer.lower() != 'y':
-      exit()
+      if answer.lower() == 's':
+        continue
+      if answer.lower() != 'y':
+        exit()
 
-    message_history.append(completion.choices[0].message)
+      message_history.append(completion.choices[0].message)
 
-    for command in commands_to_run:
-      # 2nd stage ( running the command )
-      result = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
-      output = result.stdout.decode()
-      message_history.append({
-        "role": "system",
-        "content": output + f"\nExit code: {result.returncode}"
-      })
-      print(output)
+      for command in commands_to_run:
+        # 2nd stage ( running the command )
+        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
+        output = result.stdout.decode()
+        message_history.append({
+          "role": "system",
+          "content": output + f"\nExit code: {result.returncode}"
+        })
+        print(output)
 
-    # 3rd stage ( AI parsing the command output )
-    completion = openai.ChatCompletion.create(
-      model=args.model,
-      temperature=args.temperature,
-      messages=message_history
-    )
-    tokens_consumed += completion.usage.completion_tokens
-
-    print(completion.choices[0].message.content)
+      # 3rd stage ( AI parsing the command output )
+      completion = openai.ChatCompletion.create(
+        model=args.model,
+        temperature=args.temperature,
+        messages=message_history
+      )
+      tokens_consumed += completion.usage.completion_tokens
+      print(completion.choices[0].message.content)
 
     if args.oneshot:
       break
 
-  if args.verbose:
-    print("tokens consumed:", tokens_consumed)
+    if args.verbose:
+      print("tokens consumed:", tokens_consumed)
 
 if __name__ == '__main__':
   openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -122,6 +123,7 @@ if __name__ == '__main__':
   parser.add_argument('-0', '--empty', help="Start with empty history", action='store_true')
   parser.add_argument('-s', '--voice', help="Perform speech to text", action='store_true')
   parser.add_argument('-v', '--verbose', help="Be more verbose", action='store_true')
+  parser.add_argument('-C', '--no-parse-commands', help="Don't attempt to parse terminal commands by AI", action='store_true')
 
   args = parser.parse_args()
   try:
